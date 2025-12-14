@@ -1,0 +1,380 @@
+import { Product, User, Order, AuthData } from '../types';
+
+// --- CONFIGURATION ---
+// ⚠️ WARNING: In a production app, never expose Client Secrets in frontend code.
+// These should be proxied through a secure backend.
+
+const PROJECT_KEY = 'shopswift-project';
+const AUTH_URL = 'https://auth.us-east-2.aws.commercetools.com';
+const API_URL = 'https://api.us-east-2.aws.commercetools.com';
+
+const FRONTEND_CLIENT = {
+  id: 'ThD68mbo1Rvcfws_VfdvK4ve',
+  secret: 'XX6W2L21Dlh0Ne6S_cBLQ7D1HU9GfG1g',
+  scope: 'view_categories:shopswift-project manage_my_payments:shopswift-project create_anonymous_token:shopswift-project manage_my_quotes:shopswift-project manage_my_business_units:shopswift-project view_published_products:shopswift-project manage_my_profile:shopswift-project manage_my_shopping_lists:shopswift-project manage_my_orders:shopswift-project manage_my_quote_requests:shopswift-project'
+};
+
+const ADMIN_CLIENT = {
+  id: '98dESm8Fn8mzJaB_Q2iosttm',
+  secret: '2bumPouiH73huqn35LyEAdjULXvI3NOW',
+  scope: 'manage_project:shopswift-project'
+};
+
+// --- HELPERS ---
+
+let cachedCustomerToken: string | null = null;
+let cachedAdminToken: string | null = null;
+
+// Helper to get OAuth Token
+const getAccessToken = async (isAdmin: boolean = false): Promise<string> => {
+  if (isAdmin && cachedAdminToken) return cachedAdminToken;
+  // Note: For customer flow in a real app, we'd use flow involving the specific user. 
+  // For this demo, we use client credentials for general access.
+  if (!isAdmin && cachedCustomerToken) return cachedCustomerToken;
+
+  const client = isAdmin ? ADMIN_CLIENT : FRONTEND_CLIENT;
+  const authString = btoa(`${client.id}:${client.secret}`);
+
+  try {
+    const response = await fetch(`${AUTH_URL}/oauth/token?grant_type=client_credentials&scope=${encodeURIComponent(client.scope)}`, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Basic ${authString}`,
+        'Content-Type': 'application/x-www-form-urlencoded'
+      }
+    });
+
+    if (!response.ok) throw new Error('Failed to authenticate with Commercetools');
+
+    const data = await response.json();
+    const token = data.access_token;
+
+    if (isAdmin) cachedAdminToken = token;
+    else cachedCustomerToken = token;
+
+    return token;
+  } catch (error) {
+    console.error("Auth Error:", error);
+    throw error;
+  }
+};
+
+// Helper to make API Requests
+const fetchApi = async (path: string, method: string = 'GET', body?: any, useAdmin: boolean = false) => {
+  const token = await getAccessToken(useAdmin);
+  
+  const headers: Record<string, string> = {
+    'Authorization': `Bearer ${token}`,
+    'Content-Type': 'application/json'
+  };
+
+  const response = await fetch(`${API_URL}/${PROJECT_KEY}${path}`, {
+    method,
+    headers,
+    body: body ? JSON.stringify(body) : undefined
+  });
+
+  if (!response.ok) {
+    const err = await response.json();
+    console.error("API Error:", err);
+    throw new Error(err.message || 'API Request Failed');
+  }
+
+  return response.json();
+};
+
+// Helper to map Commercetools Product to our App Product
+const mapProduct = (ctProduct: any): Product => {
+  const variant = ctProduct.masterVariant || ctProduct.masterData?.current?.masterVariant;
+  const name = ctProduct.name?.en || ctProduct.name?.['en-US'] || "Unknown Product";
+  
+  // Find price - prefer USD, fallback to first available
+  const prices = variant.prices || [];
+  const priceObj = prices.find((p: any) => p.value.currencyCode === 'USD')?.value || prices[0]?.value;
+  
+  const price = priceObj ? priceObj.centAmount / 100 : 0;
+  const currency = priceObj ? priceObj.currencyCode : 'USD';
+
+  return {
+    id: ctProduct.id,
+    name: name,
+    price: price,
+    currency: currency,
+    imageUrl: variant.images?.[0]?.url || 'https://via.placeholder.com/300',
+    sku: variant.sku || 'NO-SKU',
+    description: ctProduct.description?.en || ''
+  };
+};
+
+// --- SERVICE ---
+
+export const ApiService = {
+  login: async (data: AuthData): Promise<User> => {
+    // 1. Admin Login Handling
+    // In this demo environment, Admin accounts created via Signup are simulated (not persisted in the backend).
+    // Therefore, if the user explicitly attempts to log in as an Admin (via the toggle),
+    // we allow access to the dashboard to ensure the "Created Account" flow feels seamless.
+    if (data.isAdmin) {
+      return {
+        id: 'admin-user',
+        email: data.email,
+        firstName: 'Admin',
+        lastName: 'User',
+        isAdmin: true
+      };
+    }
+
+    // 2. Customer Login (Real Commercetools)
+    try {
+      const response = await fetchApi('/me/login', 'POST', {
+        email: data.email,
+        password: data.password
+      });
+      
+      const customer = response.customer;
+      return {
+        id: customer.id,
+        email: customer.email,
+        firstName: customer.firstName,
+        lastName: customer.lastName,
+        isAdmin: false
+      };
+    } catch (e) {
+      // Fallback for demo if CT login isn't set up with customers yet
+      console.warn("CT Login failed, falling back to simulation for demo purposes");
+      if (data.password === 'password') {
+         return {
+          id: 'simulated-user',
+          email: data.email,
+          firstName: data.firstName || 'User',
+          lastName: 'Simulated',
+          isAdmin: false
+         }
+      }
+      throw new Error("Invalid credentials");
+    }
+  },
+
+  signup: async (data: AuthData): Promise<User> => {
+    try {
+      // If signing up as Admin, we simulate the return object immediately
+      // In a real app, this would involve a separate "Create Employee" flow protected by tokens.
+      if (data.isAdmin) {
+          await new Promise(r => setTimeout(r, 800)); // Simulate delay
+          return {
+              id: `admin-${Date.now()}`,
+              email: data.email,
+              firstName: data.firstName || 'Admin',
+              lastName: data.lastName || 'User',
+              isAdmin: true
+          };
+      }
+
+      const response = await fetchApi('/me/signup', 'POST', {
+        email: data.email,
+        password: data.password,
+        firstName: data.firstName,
+        lastName: data.lastName
+      });
+      
+      const customer = response.customer;
+      return {
+        id: customer.id,
+        email: customer.email,
+        firstName: customer.firstName,
+        lastName: customer.lastName,
+        isAdmin: false
+      };
+    } catch (e: any) {
+      throw new Error(e.message || "Signup failed");
+    }
+  },
+
+  getProducts: async (): Promise<Product[]> => {
+    // Use Product Projections to get published data suitable for frontend
+    const data = await fetchApi('/product-projections?limit=20', 'GET', undefined, false);
+    return data.results.map(mapProduct);
+  },
+
+  getOrders: async (): Promise<Order[]> => {
+    try {
+      const data = await fetchApi('/orders?limit=20&sort=createdAt desc', 'GET', undefined, true);
+      
+      return data.results.map((order: any) => ({
+        id: order.id,
+        orderNumber: order.orderNumber || order.id.slice(0, 8),
+        total: order.totalPrice.centAmount / 100,
+        items: order.lineItems.length,
+        status: order.orderState === 'Complete' ? 'Completed' : 'Pending',
+        paymentStatus: order.paymentState || 'Pending',
+        shipmentStatus: order.shipmentState || 'Pending',
+        date: new Date(order.createdAt).toLocaleDateString()
+      }));
+    } catch (e) {
+      console.warn("Could not fetch orders (Project might be empty)", e);
+      return [];
+    }
+  },
+
+  createProduct: async (product: Omit<Product, 'id'>): Promise<Product> => {
+    const typeResponse = await fetchApi('/product-types?limit=1', 'GET', undefined, true);
+    if (typeResponse.results.length === 0) {
+      throw new Error("No Product Types defined in Commercetools Project. Create one in Merchant Center first.");
+    }
+    const productTypeId = typeResponse.results[0].id;
+
+    const slug = product.name.toLowerCase().replace(/[^a-z0-9]+/g, '-') + '-' + Date.now();
+
+    const body = {
+      name: { en: product.name },
+      slug: { en: slug },
+      productType: { id: productTypeId, typeId: 'product-type' },
+      description: { en: product.description },
+      masterVariant: {
+        sku: product.sku,
+        prices: [
+          {
+            value: {
+              currencyCode: product.currency,
+              centAmount: Math.round(product.price * 100)
+            }
+          }
+        ],
+        images: [
+            {
+                url: product.imageUrl,
+                dimensions: { w: 300, h: 300 }
+            }
+        ]
+      },
+      publish: true
+    };
+
+    const response = await fetchApi('/products', 'POST', body, true);
+    return mapProduct({ ...response, masterData: { current: response.masterData.staged } });
+  },
+
+  updateProductPrice: async (productId: string, newPrice: number): Promise<void> => {
+    const productData = await fetchApi(`/products/${productId}`, 'GET', undefined, true);
+    const version = productData.version;
+
+    // Fallback simple strategy: addPrice to master variant
+    await fetchApi(`/products/${productId}`, 'POST', {
+        version,
+        actions: [
+            {
+                action: 'setPrices',
+                variantId: 1,
+                prices: [
+                    {
+                        value: {
+                            currencyCode: 'USD',
+                            centAmount: Math.round(newPrice * 100)
+                        }
+                    }
+                ]
+            },
+            { action: 'publish' }
+        ]
+    }, true);
+  },
+
+  placeOrder: async (cartItems: any[], user: User | null, address: any): Promise<string> => {
+    // 1. Create a Cart
+    // We use a clean USD cart. 
+    // We do NOT set 'country' in the cart to avoid strict price matching errors against products that might have 'DE' or other country scopes.
+    // Instead, we will use ExternalPrice to force the transaction through with the display price.
+    const cartDraft: any = {
+      currency: 'USD',
+      customerEmail: address.email, // Explicitly set customer email for guest/logged-in users so it shows in Order List
+      shippingAddress: {
+        firstName: address.firstName,
+        lastName: address.lastName,
+        streetName: address.address,
+        city: address.city,
+        postalCode: address.zip,
+        country: 'US'
+      }
+    };
+    
+    if (user && user.id && user.id.length > 30) {
+        cartDraft.customerId = user.id;
+    }
+    
+    const cart = await fetchApi('/carts', 'POST', cartDraft, true);
+    
+    // 2. Add Line Items with External Price
+    // Using externalPrice ensures we don't get "No price found" errors if the backend data is messy 
+    // (e.g. mismatched countries or missing generic prices).
+    const version = cart.version;
+    const actions = cartItems.map(item => ({
+      action: 'addLineItem',
+      productId: item.id,
+      variantId: 1, 
+      quantity: item.quantity,
+      externalPrice: {
+        currencyCode: 'USD',
+        centAmount: Math.round(item.price * 100)
+      }
+    }));
+
+    try {
+      const updatedCart = await fetchApi(`/carts/${cart.id}`, 'POST', {
+        version,
+        actions
+      }, true);
+
+      // 3. Create Order from Cart
+      // Generate Order Number with Item Name
+      // We grab the first item's name, remove non-alphanumeric characters, and truncate it.
+      const itemName = cartItems.length > 0 
+        ? cartItems[0].name.replace(/[^a-zA-Z0-9]/g, '').substring(0, 15) 
+        : 'Order';
+
+      const orderBody = {
+        id: updatedCart.id,
+        version: updatedCart.version,
+        orderNumber: `${itemName}-${Date.now()}` // Format: ItemName-Timestamp
+      };
+
+      const order = await fetchApi('/orders', 'POST', orderBody, true);
+      return order.orderNumber;
+    } catch (e: any) {
+      console.error("Failed to update cart or place order:", e);
+      throw new Error(e.message || "Failed to place order.");
+    }
+  },
+
+  // NEW: Function to mark order as shipped and completed, or update individual statuses
+  updateOrderStatus: async (orderId: string, status: 'Complete' | 'Shipped' | 'Paid' | 'Delivered'): Promise<void> => {
+      // 1. Get current order version
+      const order = await fetchApi(`/orders/${orderId}`, 'GET', undefined, true);
+      
+      const actions: any[] = [];
+
+      if (status === 'Complete') {
+          actions.push(
+              { action: 'changeOrderState', orderState: 'Complete' },
+              { action: 'changeShipmentState', shipmentState: 'Delivered' }, // Complete now implies Delivered
+              { action: 'changePaymentState', paymentState: 'Paid' }
+          );
+      } else if (status === 'Shipped') {
+          actions.push({ action: 'changeShipmentState', shipmentState: 'Shipped' });
+      } else if (status === 'Delivered') {
+          actions.push({ action: 'changeShipmentState', shipmentState: 'Delivered' });
+      } else if (status === 'Paid') {
+          actions.push({ action: 'changePaymentState', paymentState: 'Paid' });
+      }
+
+      await fetchApi(`/orders/${orderId}`, 'POST', {
+          version: order.version,
+          actions: actions
+      }, true);
+  },
+
+  uploadImage: async (file: File): Promise<string> => {
+    await new Promise(r => setTimeout(r, 1000));
+    console.log("Simulating S3 Upload for", file.name);
+    return "https://images.unsplash.com/photo-1556740758-90de374c12ad?auto=format&fit=crop&w=300&q=80"; 
+  }
+};
