@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { createPortal } from 'react-dom';
-import { Package, Upload, DollarSign, List, PlusCircle, Truck, CheckCircle, CreditCard, Box, Search, X, AlertCircle, PackageCheck } from 'lucide-react';
+import { Package, DollarSign, List, Truck, CheckCircle, CreditCard, Box, Search, X, AlertCircle, PackageCheck } from 'lucide-react';
 import { Product, Order } from '../types';
 import { ApiService } from '../services/api';
 
@@ -23,11 +23,6 @@ const Admin: React.FC<AdminProps> = ({ initialProducts, onRefreshProducts }) => 
   const [products, setProducts] = useState<Product[]>(initialProducts);
   const [orders, setOrders] = useState<Order[]>([]);
   const [loading, setLoading] = useState(false);
-  
-  // New Product State
-  const [newProduct, setNewProduct] = useState({ name: '', price: '', description: '' });
-  const [selectedFile, setSelectedFile] = useState<File | null>(null);
-  const [uploadStatus, setUploadStatus] = useState('');
 
   // Modal State
   const [processingOrder, setProcessingOrder] = useState<ProcessingState | null>(null);
@@ -48,38 +43,6 @@ const Admin: React.FC<AdminProps> = ({ initialProducts, onRefreshProducts }) => 
       setOrders(res);
       setLoading(false);
     });
-  };
-
-  const handleCreateProduct = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!newProduct.name || !newProduct.price) return;
-
-    setUploadStatus('Processing...');
-    
-    try {
-      let imageUrl = "https://via.placeholder.com/300";
-      if (selectedFile) {
-        imageUrl = await ApiService.uploadImage(selectedFile);
-      }
-
-      const prod = {
-        name: newProduct.name,
-        price: parseFloat(newProduct.price),
-        currency: 'USD',
-        imageUrl,
-        sku: `SKU-${Date.now()}`,
-        description: newProduct.description
-      };
-
-      await ApiService.createProduct(prod);
-      setUploadStatus('Success!');
-      setNewProduct({ name: '', price: '', description: '' });
-      setSelectedFile(null);
-      setTimeout(() => setUploadStatus(''), 2000);
-      onRefreshProducts();
-    } catch (err) {
-      setUploadStatus('Failed');
-    }
   };
 
   const handlePriceUpdate = async (productId: string, newPrice: string) => {
@@ -250,124 +213,49 @@ const Admin: React.FC<AdminProps> = ({ initialProducts, onRefreshProducts }) => 
       </div>
 
       {activeTab === 'products' ? (
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-          {/* Create Product Form */}
-          <div className="lg:col-span-1">
-            <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100 sticky top-24">
-              <h2 className="text-lg font-bold mb-6 flex items-center gap-2 text-gray-900">
-                <div className="w-8 h-8 rounded-lg bg-indigo-100 text-indigo-600 flex items-center justify-center">
-                    <PlusCircle size={18} />
-                </div>
-                Add Product
-              </h2>
-              <form onSubmit={handleCreateProduct} className="space-y-5">
-                <div>
-                  <label className="block text-xs font-bold text-gray-500 uppercase mb-1.5">Product Name</label>
-                  <input 
-                    type="text" 
-                    className="w-full px-4 py-3 border border-gray-200 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all"
-                    placeholder="e.g. Wireless Headphones"
-                    value={newProduct.name}
-                    onChange={e => setNewProduct({...newProduct, name: e.target.value})}
-                    required
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs font-bold text-gray-500 uppercase mb-1.5">Price (USD)</label>
-                  <div className="relative">
-                      <span className="absolute left-4 top-3 text-gray-400 font-medium">$</span>
-                      <input 
-                        type="number" 
-                        className="w-full pl-8 pr-4 py-3 border border-gray-200 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all"
-                        placeholder="0.00"
-                        value={newProduct.price}
-                        onChange={e => setNewProduct({...newProduct, price: e.target.value})}
-                        required
-                      />
-                  </div>
-                </div>
-                <div>
-                  <label className="block text-xs font-bold text-gray-500 uppercase mb-1.5">Description</label>
-                  <textarea 
-                    className="w-full px-4 py-3 border border-gray-200 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all"
-                    rows={3}
-                    placeholder="Product details..."
-                    value={newProduct.description}
-                    onChange={e => setNewProduct({...newProduct, description: e.target.value})}
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs font-bold text-gray-500 uppercase mb-1.5">Product Image</label>
-                  <div className="border-2 border-dashed border-gray-200 rounded-xl p-6 text-center hover:bg-gray-50 hover:border-indigo-200 transition-all cursor-pointer relative group">
-                    <input 
-                      type="file" 
-                      className="absolute inset-0 opacity-0 cursor-pointer z-10"
-                      onChange={e => setSelectedFile(e.target.files ? e.target.files[0] : null)}
-                    />
-                    <div className="w-10 h-10 bg-indigo-50 text-indigo-500 rounded-full flex items-center justify-center mx-auto mb-3 group-hover:scale-110 transition-transform">
-                        <Upload size={20} />
-                    </div>
-                    <p className="text-sm font-medium text-gray-600">
-                      {selectedFile ? selectedFile.name : 'Click to upload image'}
-                    </p>
-                    <p className="text-xs text-gray-400 mt-1">PNG, JPG up to 5MB</p>
-                  </div>
-                </div>
-                <button 
-                  type="submit" 
-                  className="w-full bg-gray-900 text-white py-3.5 rounded-xl font-bold hover:bg-black transition-colors shadow-lg shadow-gray-200"
-                  disabled={uploadStatus === 'Processing...'}
-                >
-                  {uploadStatus || 'Create Product'}
-                </button>
-              </form>
-            </div>
-          </div>
-
+        <div className="w-full">
           {/* Product List & Price Management */}
-          <div className="lg:col-span-2">
-            <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
-               <div className="p-6 border-b border-gray-100 flex justify-between items-center bg-gray-50/50">
-                 <h2 className="font-bold text-gray-800 text-lg">Inventory</h2>
-                 <span className="text-xs font-bold bg-indigo-100 text-indigo-700 px-3 py-1 rounded-full">{products.length} Items</span>
-               </div>
-               <div className="divide-y divide-gray-50">
-                  {products.map(product => (
-                    <div key={product.id} className="p-5 flex items-center gap-5 hover:bg-gray-50 transition-colors">
-                       <div className="w-16 h-16 bg-white border border-gray-200 rounded-lg p-2 flex-shrink-0">
-                          <img src={product.imageUrl} alt="" className="w-full h-full object-contain" />
-                       </div>
-                       <div className="flex-grow">
-                          <h4 className="font-bold text-gray-900 text-sm">{product.name}</h4>
-                          <span className="text-xs text-gray-400 font-mono mt-1 block">{product.sku}</span>
-                       </div>
-                       <div className="flex items-center gap-3 bg-gray-50 p-2 rounded-lg border border-gray-100">
-                          <span className="text-sm font-bold text-gray-700 ml-1">${product.price.toFixed(2)}</span>
-                          <div className="h-4 w-px bg-gray-300"></div>
-                          <form 
-                            onSubmit={(e) => {
-                              e.preventDefault();
-                              const input = (e.currentTarget.elements[0] as HTMLInputElement);
-                              handlePriceUpdate(product.id, input.value);
-                              input.value = '';
-                            }}
-                            className="flex items-center gap-2"
-                          >
-                             <input 
-                                 type="number" 
-                                 placeholder="New Price" 
-                                 step="0.01"
-                                 className="w-24 px-2 py-1 bg-white border border-gray-200 rounded text-sm focus:ring-2 focus:ring-indigo-500 outline-none"
-                               />
-                             <button type="submit" className="bg-indigo-600 text-white p-1.5 rounded hover:bg-indigo-700 transition-colors">
-                               <CheckCircle size={14} />
-                             </button>
-                          </form>
-                       </div>
-                    </div>
-                  ))}
-               </div>
-            </div>
+          <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
+             <div className="p-6 border-b border-gray-100 flex justify-between items-center bg-gray-50/50">
+               <h2 className="font-bold text-gray-800 text-lg">Inventory</h2>
+               <span className="text-xs font-bold bg-indigo-100 text-indigo-700 px-3 py-1 rounded-full">{products.length} Items</span>
+             </div>
+             <div className="divide-y divide-gray-50">
+                {products.map(product => (
+                  <div key={product.id} className="p-5 flex items-center gap-5 hover:bg-gray-50 transition-colors">
+                     <div className="w-16 h-16 bg-white border border-gray-200 rounded-lg p-2 flex-shrink-0">
+                        <img src={product.imageUrl} alt="" className="w-full h-full object-contain" />
+                     </div>
+                     <div className="flex-grow">
+                        <h4 className="font-bold text-gray-900 text-sm">{product.name}</h4>
+                        <span className="text-xs text-gray-400 font-mono mt-1 block">{product.sku}</span>
+                     </div>
+                     <div className="flex items-center gap-3 bg-gray-50 p-2 rounded-lg border border-gray-100">
+                        <span className="text-sm font-bold text-gray-700 ml-1">${product.price.toFixed(2)}</span>
+                        <div className="h-4 w-px bg-gray-300"></div>
+                        <form 
+                          onSubmit={(e) => {
+                            e.preventDefault();
+                            const input = (e.currentTarget.elements[0] as HTMLInputElement);
+                            handlePriceUpdate(product.id, input.value);
+                            input.value = '';
+                          }}
+                          className="flex items-center gap-2"
+                        >
+                           <input 
+                               type="number" 
+                               placeholder="New Price" 
+                               step="0.01"
+                               className="w-24 px-2 py-1 bg-white border border-gray-200 rounded text-sm focus:ring-2 focus:ring-indigo-500 outline-none"
+                             />
+                           <button type="submit" className="bg-indigo-600 text-white p-1.5 rounded hover:bg-indigo-700 transition-colors">
+                             <CheckCircle size={14} />
+                           </button>
+                        </form>
+                     </div>
+                  </div>
+                ))}
+             </div>
           </div>
         </div>
       ) : (

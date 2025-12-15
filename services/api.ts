@@ -85,11 +85,11 @@ const fetchApi = async (path: string, method: string = 'GET', body?: any, useAdm
 
 // Helper to map Commercetools Product to our App Product
 const mapProduct = (ctProduct: any): Product => {
-  const variant = ctProduct.masterVariant || ctProduct.masterData?.current?.masterVariant;
+  const variant = ctProduct.masterVariant || ctProduct.masterData?.current?.masterVariant || ctProduct.masterData?.staged?.masterVariant;
   const name = ctProduct.name?.en || ctProduct.name?.['en-US'] || "Unknown Product";
   
   // Find price - prefer USD, fallback to first available
-  const prices = variant.prices || [];
+  const prices = variant?.prices || [];
   const priceObj = prices.find((p: any) => p.value.currencyCode === 'USD')?.value || prices[0]?.value;
   
   const price = priceObj ? priceObj.centAmount / 100 : 0;
@@ -100,8 +100,8 @@ const mapProduct = (ctProduct: any): Product => {
     name: name,
     price: price,
     currency: currency,
-    imageUrl: variant.images?.[0]?.url || 'https://via.placeholder.com/300',
-    sku: variant.sku || 'NO-SKU',
+    imageUrl: variant?.images?.[0]?.url || 'https://via.placeholder.com/300',
+    sku: variant?.sku || 'NO-SKU',
     description: ctProduct.description?.en || ''
   };
 };
@@ -111,9 +111,6 @@ const mapProduct = (ctProduct: any): Product => {
 export const ApiService = {
   login: async (data: AuthData): Promise<User> => {
     // 1. Admin Login Handling
-    // In this demo environment, Admin accounts created via Signup are simulated (not persisted in the backend).
-    // Therefore, if the user explicitly attempts to log in as an Admin (via the toggle),
-    // we allow access to the dashboard to ensure the "Created Account" flow feels seamless.
     if (data.isAdmin) {
       return {
         id: 'admin-user',
@@ -140,7 +137,6 @@ export const ApiService = {
         isAdmin: false
       };
     } catch (e) {
-      // Fallback for demo if CT login isn't set up with customers yet
       console.warn("CT Login failed, falling back to simulation for demo purposes");
       if (data.password === 'password') {
          return {
@@ -157,10 +153,8 @@ export const ApiService = {
 
   signup: async (data: AuthData): Promise<User> => {
     try {
-      // If signing up as Admin, we simulate the return object immediately
-      // In a real app, this would involve a separate "Create Employee" flow protected by tokens.
       if (data.isAdmin) {
-          await new Promise(r => setTimeout(r, 800)); // Simulate delay
+          await new Promise(r => setTimeout(r, 800));
           return {
               id: `admin-${Date.now()}`,
               email: data.email,
@@ -217,11 +211,26 @@ export const ApiService = {
   },
 
   createProduct: async (product: Omit<Product, 'id'>): Promise<Product> => {
+    // 1. Get or Create Product Type
+    // The project might be empty, so we must ensure a Product Type exists.
+    let productTypeId;
     const typeResponse = await fetchApi('/product-types?limit=1', 'GET', undefined, true);
-    if (typeResponse.results.length === 0) {
-      throw new Error("No Product Types defined in Commercetools Project. Create one in Merchant Center first.");
+    
+    if (typeResponse.results.length > 0) {
+      productTypeId = typeResponse.results[0].id;
+    } else {
+      console.log("No product type found, creating default...");
+      try {
+          const newType = await fetchApi('/product-types', 'POST', {
+              name: "Generic Product",
+              description: "Default product type created by ShopSwift",
+              attributes: []
+          }, true);
+          productTypeId = newType.id;
+      } catch (e: any) {
+          throw new Error("Failed to create default Product Type: " + e.message);
+      }
     }
-    const productTypeId = typeResponse.results[0].id;
 
     const slug = product.name.toLowerCase().replace(/[^a-z0-9]+/g, '-') + '-' + Date.now();
 
@@ -246,19 +255,29 @@ export const ApiService = {
                 dimensions: { w: 300, h: 300 }
             }
         ]
-      },
-      publish: true
+      }
+      // Note: 'publish: true' is not a valid field for creation. 
+      // We must create drafted, then publish via update.
     };
 
-    const response = await fetchApi('/products', 'POST', body, true);
-    return mapProduct({ ...response, masterData: { current: response.masterData.staged } });
+    // 2. Create the Product (Draft)
+    const createdProduct = await fetchApi('/products', 'POST', body, true);
+
+    // 3. Publish the Product immediately
+    const publishedProduct = await fetchApi(`/products/${createdProduct.id}`, 'POST', {
+        version: createdProduct.version,
+        actions: [
+            { action: 'publish' }
+        ]
+    }, true);
+
+    return mapProduct({ ...publishedProduct, masterData: { current: publishedProduct.masterData.staged } });
   },
 
   updateProductPrice: async (productId: string, newPrice: number): Promise<void> => {
     const productData = await fetchApi(`/products/${productId}`, 'GET', undefined, true);
     const version = productData.version;
 
-    // Fallback simple strategy: addPrice to master variant
     await fetchApi(`/products/${productId}`, 'POST', {
         version,
         actions: [
@@ -280,13 +299,9 @@ export const ApiService = {
   },
 
   placeOrder: async (cartItems: any[], user: User | null, address: any): Promise<string> => {
-    // 1. Create a Cart
-    // We use a clean USD cart. 
-    // We do NOT set 'country' in the cart to avoid strict price matching errors against products that might have 'DE' or other country scopes.
-    // Instead, we will use ExternalPrice to force the transaction through with the display price.
     const cartDraft: any = {
       currency: 'USD',
-      customerEmail: address.email, // Explicitly set customer email for guest/logged-in users so it shows in Order List
+      customerEmail: address.email,
       shippingAddress: {
         firstName: address.firstName,
         lastName: address.lastName,
@@ -303,9 +318,6 @@ export const ApiService = {
     
     const cart = await fetchApi('/carts', 'POST', cartDraft, true);
     
-    // 2. Add Line Items with External Price
-    // Using externalPrice ensures we don't get "No price found" errors if the backend data is messy 
-    // (e.g. mismatched countries or missing generic prices).
     const version = cart.version;
     const actions = cartItems.map(item => ({
       action: 'addLineItem',
@@ -324,9 +336,6 @@ export const ApiService = {
         actions
       }, true);
 
-      // 3. Create Order from Cart
-      // Generate Order Number with Item Name
-      // We grab the first item's name, remove non-alphanumeric characters, and truncate it.
       const itemName = cartItems.length > 0 
         ? cartItems[0].name.replace(/[^a-zA-Z0-9]/g, '').substring(0, 15) 
         : 'Order';
@@ -334,7 +343,7 @@ export const ApiService = {
       const orderBody = {
         id: updatedCart.id,
         version: updatedCart.version,
-        orderNumber: `${itemName}-${Date.now()}` // Format: ItemName-Timestamp
+        orderNumber: `${itemName}-${Date.now()}`
       };
 
       const order = await fetchApi('/orders', 'POST', orderBody, true);
@@ -345,9 +354,7 @@ export const ApiService = {
     }
   },
 
-  // NEW: Function to mark order as shipped and completed, or update individual statuses
   updateOrderStatus: async (orderId: string, status: 'Complete' | 'Shipped' | 'Paid' | 'Delivered'): Promise<void> => {
-      // 1. Get current order version
       const order = await fetchApi(`/orders/${orderId}`, 'GET', undefined, true);
       
       const actions: any[] = [];
@@ -355,7 +362,7 @@ export const ApiService = {
       if (status === 'Complete') {
           actions.push(
               { action: 'changeOrderState', orderState: 'Complete' },
-              { action: 'changeShipmentState', shipmentState: 'Delivered' }, // Complete now implies Delivered
+              { action: 'changeShipmentState', shipmentState: 'Delivered' },
               { action: 'changePaymentState', paymentState: 'Paid' }
           );
       } else if (status === 'Shipped') {

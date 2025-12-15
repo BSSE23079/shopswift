@@ -24,22 +24,13 @@ const Auth: React.FC<AuthProps> = ({ onLogin, onSwitchMode, isSignup = false }) 
         lastName: '',
         isAdmin: userType === 'admin'
     }));
-
-    // If switching to login and mode is admin, autofill demo credentials
-    if (!isSignup && userType === 'admin') {
-         setFormData(prev => ({ ...prev, email: 'admin@shopswift.com', password: 'password' }));
-    }
   }, [isSignup, userType]);
 
   const handleUserTypeChange = (type: 'customer' | 'admin') => {
     setUserType(type);
     
-    // Only autofill if in Login mode. In Signup mode, we want fresh inputs.
-    if (!isSignup && type === 'admin') {
-      setFormData({ ...formData, email: 'admin@shopswift.com', password: 'password', isAdmin: true });
-    } else {
-      setFormData({ ...formData, email: '', password: '', isAdmin: type === 'admin' });
-    }
+    // Reset form data when switching types to avoid confusion
+    setFormData({ ...formData, email: '', password: '', isAdmin: type === 'admin' });
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
