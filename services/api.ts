@@ -110,7 +110,18 @@ const mapProduct = (ctProduct: any): Product => {
 
 export const ApiService = {
   login: async (data: AuthData): Promise<User> => {
-    // 1. Admin Login Handling
+    // --- 1. SPECIAL CEO ADMIN LOGIN ---
+    if (data.email === 'numzum@ceo.pk' && data.password === '12345') {
+      return {
+        id: 'admin-ceo',
+        email: 'zubnum@ceo.pk',
+        firstName: 'admin',
+        lastName: 'ceo',
+        isAdmin: true // <--- This grants access to the Admin Dashboard
+      };
+    }
+
+    // --- 2. Generic Admin Login (Optional: keep or remove) ---
     if (data.isAdmin) {
       return {
         id: 'admin-user',
@@ -121,7 +132,7 @@ export const ApiService = {
       };
     }
 
-    // 2. Customer Login (Real Commercetools)
+    // --- 3. Customer Login (Real Commercetools) ---
     try {
       const response = await fetchApi('/me/login', 'POST', {
         email: data.email,

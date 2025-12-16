@@ -46,6 +46,8 @@ export const MOCK_ORDERS: Order[] = [
     total: 349.99,
     items: 2,
     status: 'Completed',
+    paymentStatus: 'Paid',
+    shipmentStatus: 'Delivered',
     date: '2023-10-15'
   },
   {
@@ -54,6 +56,8 @@ export const MOCK_ORDERS: Order[] = [
     total: 199.99,
     items: 1,
     status: 'Pending',
+    paymentStatus: 'Pending',
+    shipmentStatus: 'Pending',
     date: '2023-10-16'
   }
 ];
