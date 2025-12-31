@@ -8,6 +8,9 @@ const PROJECT_KEY = 'shopswift-project';
 const AUTH_URL = 'https://auth.us-east-2.aws.commercetools.com';
 const API_URL = 'https://api.us-east-2.aws.commercetools.com';
 
+// ⚠️ REPLACE THIS WITH YOUR ACTUAL AWS API GATEWAY URL FROM TERMINAL STEPS ⚠️
+const AWS_API_GATEWAY_URL = "https://xwv7twzhjf.execute-api.us-east-1.amazonaws.com"; 
+
 const FRONTEND_CLIENT = {
   id: 'ThD68mbo1Rvcfws_VfdvK4ve',
   secret: 'XX6W2L21Dlh0Ne6S_cBLQ7D1HU9GfG1g',
@@ -28,8 +31,6 @@ let cachedAdminToken: string | null = null;
 // Helper to get OAuth Token
 const getAccessToken = async (isAdmin: boolean = false): Promise<string> => {
   if (isAdmin && cachedAdminToken) return cachedAdminToken;
-  // Note: For customer flow in a real app, we'd use flow involving the specific user. 
-  // For this demo, we use client credentials for general access.
   if (!isAdmin && cachedCustomerToken) return cachedCustomerToken;
 
   const client = isAdmin ? ADMIN_CLIENT : FRONTEND_CLIENT;
@@ -114,14 +115,14 @@ export const ApiService = {
     if (data.email === 'numzum@ceo.pk' && data.password === '12345') {
       return {
         id: 'admin-ceo',
-        email: 'zubnum@ceo.pk',
-        firstName: 'admin',
-        lastName: 'ceo',
+        email: 'numzum@ceo.pk',
+        firstName: 'NumZum',
+        lastName: 'CEO',
         isAdmin: true // <--- This grants access to the Admin Dashboard
       };
     }
 
-    // --- 2. Generic Admin Login (Optional: keep or remove) ---
+    // --- 2. Generic Admin Login ---
     if (data.isAdmin) {
       return {
         id: 'admin-user',
@@ -196,7 +197,6 @@ export const ApiService = {
   },
 
   getProducts: async (): Promise<Product[]> => {
-    // Use Product Projections to get published data suitable for frontend
     const data = await fetchApi('/product-projections?limit=20', 'GET', undefined, false);
     return data.results.map(mapProduct);
   },
@@ -222,8 +222,6 @@ export const ApiService = {
   },
 
   createProduct: async (product: Omit<Product, 'id'>): Promise<Product> => {
-    // 1. Get or Create Product Type
-    // The project might be empty, so we must ensure a Product Type exists.
     let productTypeId;
     const typeResponse = await fetchApi('/product-types?limit=1', 'GET', undefined, true);
     
@@ -257,7 +255,8 @@ export const ApiService = {
             value: {
               currencyCode: product.currency,
               centAmount: Math.round(product.price * 100)
-            }
+            },
+            country: 'US' // Important for matching checkout logic
           }
         ],
         images: [
@@ -267,14 +266,10 @@ export const ApiService = {
             }
         ]
       }
-      // Note: 'publish: true' is not a valid field for creation. 
-      // We must create drafted, then publish via update.
     };
 
-    // 2. Create the Product (Draft)
     const createdProduct = await fetchApi('/products', 'POST', body, true);
 
-    // 3. Publish the Product immediately
     const publishedProduct = await fetchApi(`/products/${createdProduct.id}`, 'POST', {
         version: createdProduct.version,
         actions: [
@@ -300,7 +295,8 @@ export const ApiService = {
                         value: {
                             currencyCode: 'USD',
                             centAmount: Math.round(newPrice * 100)
-                        }
+                        },
+                        country: 'US' // Force US to keep checkout working
                     }
                 ]
             },
@@ -310,8 +306,10 @@ export const ApiService = {
   },
 
   placeOrder: async (cartItems: any[], user: User | null, address: any): Promise<string> => {
+    // 1. Prepare Cart Draft (Force US settings)
     const cartDraft: any = {
       currency: 'USD',
+      country: 'US', // Matches admin product settings
       customerEmail: address.email,
       shippingAddress: {
         firstName: address.firstName,
@@ -327,8 +325,10 @@ export const ApiService = {
         cartDraft.customerId = user.id;
     }
     
+    // 2. Create Cart
     const cart = await fetchApi('/carts', 'POST', cartDraft, true);
     
+    // 3. Add Items
     const version = cart.version;
     const actions = cartItems.map(item => ({
       action: 'addLineItem',
@@ -347,6 +347,7 @@ export const ApiService = {
         actions
       }, true);
 
+      // 4. Create Order in Commercetools
       const itemName = cartItems.length > 0 
         ? cartItems[0].name.replace(/[^a-zA-Z0-9]/g, '').substring(0, 15) 
         : 'Order';
@@ -358,7 +359,41 @@ export const ApiService = {
       };
 
       const order = await fetchApi('/orders', 'POST', orderBody, true);
+
+      // --- 5. TRIGGER AWS MICROSERVICES (Lambda -> EventBridge) ---
+      // This is the critical step for your Architecture Diagram
+      if (AWS_API_GATEWAY_URL && !AWS_API_GATEWAY_URL.includes("REPLACE_ME")) {
+          try {
+            console.log("⚡ Triggering AWS Backend...");
+            
+            const awsPayload = {
+                source: "shopswift.frontend",
+                orderId: order.id,
+                orderNumber: order.orderNumber,
+                customerEmail: address.email,
+                totalAmount: order.totalPrice?.centAmount / 100 || 0,
+                items: cartItems.map(i => ({ id: i.id, name: i.name, qty: i.quantity })),
+                timestamp: new Date().toISOString()
+            };
+
+            // Non-blocking fetch (Fire and forget)
+            fetch(AWS_API_GATEWAY_URL, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(awsPayload)
+            })
+            .then(res => console.log("✅ AWS Notified. Status:", res.status))
+            .catch(err => console.warn("⚠️ AWS Network Error:", err));
+
+          } catch (awsError) {
+            console.warn("⚠️ AWS Logic Skipped:", awsError);
+          }
+      } else {
+          console.warn("⚠️ AWS API URL is missing. Order saved in Commercetools only.");
+      }
+
       return order.orderNumber;
+
     } catch (e: any) {
       console.error("Failed to update cart or place order:", e);
       throw new Error(e.message || "Failed to place order.");
